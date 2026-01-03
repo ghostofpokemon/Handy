@@ -4,5 +4,9 @@
 <dict>
   <key>NSMicrophoneUsageDescription</key>
   <string>Request microphone access to transcribe audio locally</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Handy needs to control other applications to type text directly.</string>
+  <key>NSAccessibilityUsageDescription</key>
+  <string>Handy uses accessibility features to simulate keyboard input for typing transcriptions.</string>
 </dict>
 </plist>

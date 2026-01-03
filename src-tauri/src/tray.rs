@@ -10,6 +10,7 @@ pub enum TrayIconState {
     Idle,
     Recording,
     Transcribing,
+    TranscribingFile,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -45,14 +46,17 @@ pub fn get_icon_path(theme: AppTheme, state: TrayIconState) -> &'static str {
         (AppTheme::Dark, TrayIconState::Idle) => "resources/tray_idle.png",
         (AppTheme::Dark, TrayIconState::Recording) => "resources/tray_recording.png",
         (AppTheme::Dark, TrayIconState::Transcribing) => "resources/tray_transcribing.png",
+        (AppTheme::Dark, TrayIconState::TranscribingFile) => "resources/tray_transcribing.png",
         // Light theme uses dark icons
         (AppTheme::Light, TrayIconState::Idle) => "resources/tray_idle_dark.png",
         (AppTheme::Light, TrayIconState::Recording) => "resources/tray_recording_dark.png",
         (AppTheme::Light, TrayIconState::Transcribing) => "resources/tray_transcribing_dark.png",
+        (AppTheme::Light, TrayIconState::TranscribingFile) => "resources/tray_transcribing_dark.png",
         // Colored theme uses pink icons (for Linux)
         (AppTheme::Colored, TrayIconState::Idle) => "resources/handy.png",
         (AppTheme::Colored, TrayIconState::Recording) => "resources/recording.png",
         (AppTheme::Colored, TrayIconState::Transcribing) => "resources/transcribing.png",
+        (AppTheme::Colored, TrayIconState::TranscribingFile) => "resources/transcribing.png",
     }
 }
 
@@ -103,6 +107,14 @@ pub fn update_tray_menu(app: &AppHandle, state: &TrayIconState, locale: Option<&
         settings_accelerator,
     )
     .expect("failed to create settings item");
+    let transcribe_file_i = MenuItem::with_id(
+        app,
+        "transcribe_file",
+        &strings.transcribe_file,
+        true,
+        None::<&str>,
+    )
+    .expect("failed to create transcribe file item");
     let check_updates_i = MenuItem::with_id(
         app,
         "check_updates",
@@ -116,7 +128,7 @@ pub fn update_tray_menu(app: &AppHandle, state: &TrayIconState, locale: Option<&
     let separator = || PredefinedMenuItem::separator(app).expect("failed to create separator");
 
     let menu = match state {
-        TrayIconState::Recording | TrayIconState::Transcribing => {
+        TrayIconState::Recording | TrayIconState::Transcribing | TrayIconState::TranscribingFile => {
             let cancel_i = MenuItem::with_id(app, "cancel", &strings.cancel, true, None::<&str>)
                 .expect("failed to create cancel item");
             Menu::with_items(
@@ -127,6 +139,7 @@ pub fn update_tray_menu(app: &AppHandle, state: &TrayIconState, locale: Option<&
                     &cancel_i,
                     &separator(),
                     &settings_i,
+                    &transcribe_file_i,
                     &check_updates_i,
                     &separator(),
                     &quit_i,
@@ -140,6 +153,7 @@ pub fn update_tray_menu(app: &AppHandle, state: &TrayIconState, locale: Option<&
                 &version_i,
                 &separator(),
                 &settings_i,
+                &transcribe_file_i,
                 &check_updates_i,
                 &separator(),
                 &quit_i,

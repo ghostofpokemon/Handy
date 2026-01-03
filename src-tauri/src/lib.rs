@@ -172,6 +172,23 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             "settings" => {
                 show_main_window(app);
             }
+            "transcribe_file" => {
+                use tauri_plugin_dialog::DialogExt;
+                let app_handle = app.clone();
+                app.dialog().file().pick_file(move |file_path| {
+                    if let Some(path) = file_path {
+                        let app_handle = app_handle.clone();
+                        if let Some(path_buf) = path.into_path().ok() {
+                            tauri::async_runtime::spawn(async move {
+                                let tm = app_handle.state::<Arc<TranscriptionManager>>();
+                                if let Err(e) = tm.transcribe_file(path_buf).await {
+                                    log::error!("Failed to transcribe file: {}", e);
+                                }
+                            });
+                        }
+                    }
+                });
+            }
             "check_updates" => {
                 let settings = settings::get_settings(app);
                 if settings.update_checks_enabled {
@@ -265,6 +282,7 @@ pub fn run() {
         shortcut::change_app_language_setting,
         shortcut::change_update_checks_setting,
         trigger_update_check,
+        commands::transcription::transcribe_file,
         commands::cancel_operation,
         commands::get_app_dir_path,
         commands::get_app_settings,
@@ -353,6 +371,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app);
         }))
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
