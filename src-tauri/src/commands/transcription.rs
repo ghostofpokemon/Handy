@@ -2,12 +2,30 @@ use crate::managers::transcription::TranscriptionManager;
 use crate::settings::{get_settings, write_settings, ModelUnloadTimeout};
 use serde::Serialize;
 use specta::Type;
+use std::path::PathBuf;
+use std::sync::Arc;
 use tauri::{AppHandle, State};
 
 #[derive(Serialize, Type)]
 pub struct ModelLoadStatus {
     is_loaded: bool,
     current_model: Option<String>,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn transcribe_file(
+    _app: AppHandle,
+    transcription_manager: State<'_, Arc<TranscriptionManager>>,
+    path: PathBuf,
+) -> Result<String, String> {
+    // We'll implement the actual logic in TranscriptionManager
+    // but for now let's just use the existing samples transcription if we can
+    // Or we might need a new method in TranscriptionManager that takes a path.
+    transcription_manager
+        .transcribe_file(path)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

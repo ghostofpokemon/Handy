@@ -10,10 +10,10 @@ use cpal::{
 };
 
 use crate::audio_toolkit::{
-    audio::{AudioVisualiser, FrameResampler},
+    audio::resampler::FrameResampler,
+    audio::visualizer::AudioVisualiser,
     constants,
-    vad::{self, VadFrame},
-    VoiceActivityDetector,
+    vad::{self, VadFrame, VoiceActivityDetector},
 };
 
 enum Cmd {

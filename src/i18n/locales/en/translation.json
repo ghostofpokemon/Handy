@@ -1,6 +1,7 @@
 {
   "tray": {
     "settings": "Settings...",
+    "transcribeFile": "Transcribe File...",
     "checkUpdates": "Check for Updates...",
     "quit": "Quit",
     "cancel": "Cancel"

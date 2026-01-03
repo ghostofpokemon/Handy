@@ -315,6 +315,69 @@ impl TranscriptionManager {
         current_model.clone()
     }
 
+    pub async fn transcribe_file(&self, path: std::path::PathBuf) -> Result<String> {
+        info!("Transcribing file: {:?}", path);
+
+        // Update last activity timestamp
+        self.last_activity.store(
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64,
+            Ordering::Relaxed,
+        );
+
+        // Load model if not loaded
+        self.initiate_model_load();
+
+        // Wait for it to load
+        {
+            let mut is_loading = self.is_loading.lock().unwrap();
+            while *is_loading {
+                is_loading = self.loading_condvar.wait(is_loading).unwrap();
+            }
+
+            let engine_guard = self.engine.lock().unwrap();
+            if engine_guard.is_none() {
+                return Err(anyhow::anyhow!("Model is not loaded for transcription."));
+            }
+        }
+
+        // Read audio file and convert to samples (f32, 16kHz)
+        // We'll use rodio or symphonia for this. Handy already has hound and rubato.
+        let samples = crate::audio_toolkit::audio::read_audio_file(&path)?;
+
+        // Update tray icon to transcribing file
+        crate::tray::change_tray_icon(&self.app_handle, crate::tray::TrayIconState::TranscribingFile);
+
+        let result = self.transcribe(samples)?;
+
+        // Generate SRT if it was a file transcription
+        self.generate_srt(&path, &result)?;
+
+        // Return tray to idle
+        crate::tray::change_tray_icon(&self.app_handle, crate::tray::TrayIconState::Idle);
+
+        Ok(result)
+    }
+
+    fn generate_srt(&self, audio_path: &std::path::Path, text: &str) -> Result<()> {
+        let srt_path = audio_path.with_extension("srt");
+        info!("Generating SRT at: {:?}", srt_path);
+
+        // Simple SRT generation: for now, we'll just put the whole text in one block
+        // because we don't have easy access to segment timestamps here yet
+        // without modifying the transcribe function to return them.
+        // TODO: Get real timestamps from the engine.
+        let srt_content = format!(
+            "1\n00:00:00,000 --> 00:00:59,999\n{}\n",
+            text
+        );
+
+        std::fs::write(srt_path, srt_content)?;
+        Ok(())
+    }
+
     pub fn transcribe(&self, audio: Vec<f32>) -> Result<String> {
         // Update last activity timestamp
         self.last_activity.store(
