@@ -1,6 +1,6 @@
 [package]
 name = "handy"
-version = "0.6.10"
+version = "0.7.3"
 description = "Handy"
 authors = ["cjpais"]
 edition = "2021"
@@ -74,6 +74,7 @@ specta-typescript = "0.0.9"
 tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
 tauri-plugin-dialog = "2.4.2"
 symphonia = { version = "0.5.5", features = ["all"] }
+uuid = { version = "1.19.0", features = ["v4"] }
 
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"

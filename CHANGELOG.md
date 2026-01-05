@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Transcribe File**: Added capability to transcribe audio files directly via the system tray. Supports various formats (mp3, wav, ogg, opus, etc.) using `ffmpeg` for conversion.
+- New "Transcribe File" window with drag-and-drop support, language selection, and progress tracking.
+
 ## [0.3.0] - 2025-07-11
 
 ### Added

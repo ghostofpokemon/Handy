@@ -27,6 +27,26 @@ pub struct ModelStateEvent {
     pub error: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct Segment {
+    pub start: f32,
+    pub end: f32,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct FileTranscriptionCompleted {
+    pub path: String,
+    pub segments: Vec<Segment>,
+    pub text: String, // Kept for legacy compatibility if needed
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct TranscriptionProgress {
+    pub segments: Vec<Segment>,
+    pub is_partial: bool,
+}
+
 enum LoadedEngine {
     Whisper(WhisperEngine),
     Parakeet(ParakeetEngine),
@@ -125,6 +145,40 @@ impl TranscriptionManager {
         }
 
         Ok(manager)
+    }
+
+    pub fn ensure_translation_capable_engine(&self) -> Result<()> {
+        let needs_switch = {
+             let engine = self.engine.lock().unwrap();
+             if let Some(LoadedEngine::Parakeet(_)) = *engine {
+                 true
+             } else {
+                 false
+             }
+        };
+
+        if needs_switch {
+             info!("Translation requested but Parakeet is loaded. Switching to a Whisper model...");
+             
+             // Find a suitable Whisper model
+             let available = self.model_manager.get_available_models();
+             let best_whisper = available.iter()
+                 .filter(|m| m.engine_type == EngineType::Whisper && m.is_downloaded)
+                 .max_by(|a, b| {
+                     // Prefer 'turbo' > 'medium' > 'small' > 'large' (logic can be simple order)
+                     let score_a = if a.id.contains("turbo") { 100 } else { a.accuracy_score as i32 };
+                     let score_b = if b.id.contains("turbo") { 100 } else { b.accuracy_score as i32 };
+                     score_a.cmp(&score_b)
+                 });
+
+             if let Some(model) = best_whisper {
+                 info!("Auto-switching to Whisper model: {} for translation.", model.id);
+                 self.load_model(&model.id)?;
+             } else {
+                 warn!("Translation requested but no downloaded Whisper model found. Proceeding with Parakeet (Translation will be ignored).");
+             }
+        }
+        Ok(())
     }
 
     pub fn is_model_loaded(&self) -> bool {
@@ -315,7 +369,11 @@ impl TranscriptionManager {
         current_model.clone()
     }
 
-    pub async fn transcribe_file(&self, path: std::path::PathBuf) -> Result<String> {
+    pub async fn transcribe_file(
+        &self,
+        path: std::path::PathBuf,
+        options: Option<crate::commands::transcription::FileTranscriptionOptions>,
+    ) -> Result<()> {
         info!("Transcribing file: {:?}", path);
 
         // Update last activity timestamp
@@ -348,37 +406,39 @@ impl TranscriptionManager {
         let samples = crate::audio_toolkit::audio::read_audio_file(&path)?;
 
         // Update tray icon to transcribing file
-        crate::tray::change_tray_icon(&self.app_handle, crate::tray::TrayIconState::TranscribingFile);
+        crate::tray::change_tray_icon(
+            &self.app_handle,
+            crate::tray::TrayIconState::TranscribingFile,
+        );
 
-        let result = self.transcribe(samples)?;
+        let (result_text, final_segments) = self.transcribe(samples, options)?;
 
-        // Generate SRT if it was a file transcription
-        self.generate_srt(&path, &result)?;
+        // Emit completion event (STRUCTURED)
+        let _ = self.app_handle.emit(
+            "file-transcription-completed",
+            FileTranscriptionCompleted {
+                path: path.to_string_lossy().to_string(),
+                segments: final_segments,
+                text: result_text.clone(),
+            },
+        );
+
+        // Generate SRT if it was a file transcription (Optional, now we emit event)
+        // self.generate_srt(&path, &result)?;
 
         // Return tray to idle
         crate::tray::change_tray_icon(&self.app_handle, crate::tray::TrayIconState::Idle);
 
-        Ok(result)
-    }
-
-    fn generate_srt(&self, audio_path: &std::path::Path, text: &str) -> Result<()> {
-        let srt_path = audio_path.with_extension("srt");
-        info!("Generating SRT at: {:?}", srt_path);
-
-        // Simple SRT generation: for now, we'll just put the whole text in one block
-        // because we don't have easy access to segment timestamps here yet
-        // without modifying the transcribe function to return them.
-        // TODO: Get real timestamps from the engine.
-        let srt_content = format!(
-            "1\n00:00:00,000 --> 00:00:59,999\n{}\n",
-            text
-        );
-
-        std::fs::write(srt_path, srt_content)?;
         Ok(())
     }
 
-    pub fn transcribe(&self, audio: Vec<f32>) -> Result<String> {
+// ...
+
+    pub fn transcribe(
+        &self,
+        audio: Vec<f32>,
+        options: Option<crate::commands::transcription::FileTranscriptionOptions>,
+    ) -> Result<(String, Vec<Segment>)> {
         // Update last activity timestamp
         self.last_activity.store(
             SystemTime::now()
@@ -395,7 +455,7 @@ impl TranscriptionManager {
         if audio.is_empty() {
             debug!("Empty audio vector");
             self.maybe_unload_immediately("empty audio");
-            return Ok(String::new());
+            return Ok((String::new(), Vec::new()));
         }
 
         // Check if model is loaded, if not try to load it
@@ -415,68 +475,195 @@ impl TranscriptionManager {
         // Get current settings for configuration
         let settings = get_settings(&self.app_handle);
 
+        // Use options if provided, otherwise fallback to settings
+        let (selected_language, translate_to_english) = if let Some(opts) = options {
+            (
+                opts.language.unwrap_or(settings.selected_language.clone()),
+                opts.translate,
+            )
+        } else {
+            (
+                settings.selected_language.clone(),
+                settings.translate_to_english,
+            )
+        };
+
+        // CHUNKED PROCESSING LOGIC
+        // We split the audio into 5-second chunks (16000 * 5 = 80000 samples)
+        // This allows us to emit progress events to simulates streaming.
+        
+        let chunk_size = 16000 * 5; // 5 seconds
+        let mut full_text_accum = String::new();
+        let mut full_segments_accum = Vec::new();
+        
+        let chunks: Vec<&[f32]> = audio.chunks(chunk_size).collect();
+        let total_chunks = chunks.len();
+        
+        info!("Processing audio in {} chunks of size {}", total_chunks, chunk_size);
+        
+        // Accumulate timing
+        let mut previous_end_time = 0.0;
+
+        for (i, chunk) in chunks.iter().enumerate() {
+            debug!("Processing chunk {}/{}", i + 1, total_chunks);
+            let chunk_vec = chunk.to_vec(); // Copying is unavoidable if engine takes ownership or needs vec
+            
+             // Perform transcription with the appropriate engine (RE-USE EXISTING ENGINE LOGIC)
+             // We need to capture the engine logic in a helper or closure to avoid code duplication
+             // But for now, let's just inline the engine call since it's inside match
+             // SMART SWITCHING: "NEVER NOT DELIVER" TRANSLATION
+        if translate_to_english {
+            if let Err(e) = self.ensure_translation_capable_engine() {
+                 // Stick with Parakeet if switch fails (log warning)
+                 error!("Smart Switch failed: {}", e);
+            }
+        }
+
         // Perform transcription with the appropriate engine
         let result = {
             let mut engine_guard = self.engine.lock().unwrap();
             let engine = engine_guard.as_mut().ok_or_else(|| {
+                // If switch happened, it should be loaded. If not, maybe auto-load failed?
                 anyhow::anyhow!(
-                    "Model failed to load after auto-load attempt. Please check your model settings."
+                    "Model failed to load. Please check your model settings."
                 )
             })?;
-
+            
+            // Re-verify engine type after potential switch
             match engine {
                 LoadedEngine::Whisper(whisper_engine) => {
-                    // Normalize language code for Whisper
-                    // Convert zh-Hans and zh-Hant to zh since Whisper uses ISO 639-1 codes
-                    let whisper_language = if settings.selected_language == "auto" {
+                    // Logic for Whisper (supports translation)
+                    let whisper_language = if selected_language == "auto" {
                         None
                     } else {
-                        let normalized = if settings.selected_language == "zh-Hans"
-                            || settings.selected_language == "zh-Hant"
-                        {
+                         // Normalize
+                        let normalized = if selected_language == "zh-Hans" || selected_language == "zh-Hant" {
                             "zh".to_string()
                         } else {
-                            settings.selected_language.clone()
+                            selected_language.clone()
                         };
                         Some(normalized)
                     };
 
                     let params = WhisperInferenceParams {
                         language: whisper_language,
-                        translate: settings.translate_to_english,
+                        translate: translate_to_english,
                         ..Default::default()
                     };
 
                     whisper_engine
-                        .transcribe_samples(audio, Some(params))
+                        .transcribe_samples(chunk_vec, Some(params))
                         .map_err(|e| anyhow::anyhow!("Whisper transcription failed: {}", e))?
                 }
                 LoadedEngine::Parakeet(parakeet_engine) => {
+                    // Parakeet does NOT support translation.
+                    // If we are here, Smart Switch failed or no Whisper model was found.
+                    if translate_to_english {
+                         warn!("Parakeet engine does not support translation. Falling back to transcription only.");
+                    }
+
                     let params = ParakeetInferenceParams {
                         timestamp_granularity: TimestampGranularity::Segment,
                         ..Default::default()
                     };
 
                     parakeet_engine
-                        .transcribe_samples(audio, Some(params))
+                        .transcribe_samples(chunk_vec, Some(params))
                         .map_err(|e| anyhow::anyhow!("Parakeet transcription failed: {}", e))?
-                }
+
+            }
             }
         };
+             // Process Result for this chunk
+             // 1. Shift timestamps
+             let mut chunk_segments = result.segments.unwrap_or_default();
+             for segment in &mut chunk_segments {
+                 segment.start += previous_end_time;
+                 segment.end += previous_end_time;
+             }
+             
+             // Update timing offset for next chunk
+             // Ideally we use the duration of the chunk, or the end time of the last segment?
+             // Using discrete 5s chunks:
+             // previous_end_time += 5.0; -> simpler
+             // Or precise: previous_end_time += chunk.len() as f32 / 16000.0;
+             let duration_sec = chunk.len() as f32 / 16000.0;
+             previous_end_time += duration_sec;
 
-        // Apply word correction if custom words are configured
-        let corrected_result = if !settings.custom_words.is_empty() {
-            apply_custom_words(
-                &result.text,
-                &settings.custom_words,
-                settings.word_correction_threshold,
-            )
-        } else {
-            result.text
-        };
+             // 2. Format partial text (DEPRECATED for streaming, but kept for logic)
+             // We now prioritize emitting segments
+             
+             let mut chunk_segments_vec = Vec::new();
+             if !chunk_segments.is_empty() {
+                  for segment in &chunk_segments {
+                      // Apply custom words
+                      let text = if !settings.custom_words.is_empty() {
+                           apply_custom_words(
+                             &segment.text,
+                              &settings.custom_words,
+                              settings.word_correction_threshold
+                           )
+                      } else {
+                          segment.text.clone()
+                      };
+                      
+                      chunk_segments_vec.push(Segment {
+                          start: segment.start,
+                          end: segment.end,
+                          text: text.trim().to_string(), // Trim here
+                      });
+                  }
+             } else {
+                 // Fallback if no segments but text exists? 
+                 // If engine returns no segments but text, creates pseudo-segment?
+                 // Usually unlikely for Whisper/Parakeet.
+                 if !result.text.trim().is_empty() {
+                     chunk_segments_vec.push(Segment {
+                         start: previous_end_time - duration_sec, // Rough estimate
+                         end: previous_end_time,
+                         text: result.text.trim().to_string(),
+                     });
+                 }
+             }
+             
+             // Emit Progress
+             if !chunk_segments_vec.is_empty() {
+                 let _ = self.app_handle.emit("transcription-progress", TranscriptionProgress {
+                     segments: chunk_segments_vec.clone(),
+                     is_partial: true
+                 });
+             }
+
+             // Accumulate
+             full_segments_accum.extend(chunk_segments); // Internal transcribe-rs/segment struct
+             // Also accumulate for final result
+        }
+
+        // Final result construction
+        // Map full_segments_accum to our Segment struct
+        let final_segments: Vec<Segment> = full_segments_accum.iter().map(|s| {
+             let text = if !settings.custom_words.is_empty() {
+                  apply_custom_words(
+                    &s.text,
+                     &settings.custom_words,
+                     settings.word_correction_threshold
+                  )
+             } else {
+                 s.text.clone()
+             };
+            Segment {
+                start: s.start,
+                end: s.end,
+                text: text.trim().to_string(),
+            }
+        }).collect();
+
+        // Construct full text for legacy return? Actually we can just return empty or formatted string.
+        let full_text_combined = final_segments.iter().map(|s| s.text.clone()).collect::<Vec<_>>().join(" ");
+        let formatted_result = full_text_combined; // Variable expected by following code
 
         let et = std::time::Instant::now();
-        let translation_note = if settings.translate_to_english {
+        let translation_note = if translate_to_english {
             " (translated)"
         } else {
             ""
@@ -487,7 +674,7 @@ impl TranscriptionManager {
             translation_note
         );
 
-        let final_result = corrected_result.trim().to_string();
+        let final_result = formatted_result.trim().to_string();
 
         if final_result.is_empty() {
             info!("Transcription result is empty");
@@ -497,7 +684,7 @@ impl TranscriptionManager {
 
         self.maybe_unload_immediately("transcription");
 
-        Ok(final_result)
+        Ok((formatted_result, final_segments))
     }
 }
 
@@ -517,4 +704,13 @@ impl Drop for TranscriptionManager {
             }
         }
     }
+}
+
+fn format_timestamp(seconds: f32) -> String {
+    let seconds_u64 = seconds as u64;
+    let millis = ((seconds - seconds_u64 as f32) * 1000.0) as u64;
+    let hours = seconds_u64 / 3600;
+    let minutes = (seconds_u64 % 3600) / 60;
+    let secs = seconds_u64 % 60;
+    format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, secs, millis)
 }
