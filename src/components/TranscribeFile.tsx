@@ -228,7 +228,6 @@ export default function TranscribeFile() {
               {isTranscribing ? (
                 <>
                   <div className="relative">
-                    <div className="absolute inset-0 bg-[#da5893]/20 blur-xl rounded-full animate-pulse"></div>
                     <Loader2 className="w-16 h-16 text-[#da5893] animate-spin relative z-10" />
                   </div>
                   <div className="space-y-2">
@@ -241,7 +240,7 @@ export default function TranscribeFile() {
               ) : (
                 <div className="max-w-md w-full space-y-8">
                   {/* Options Panel: Neo-Art-Deco Style */}
-                  <div className="grid gap-4 bg-secondary/10 p-6 rounded-none border border-border/50 backdrop-blur-md shadow-2xl">
+                  <div className="grid gap-4 bg-secondary/10 p-6 rounded-none border border-border/50 backdrop-blur-md">
                     <div className="flex items-center justify-between border-b border-border/20 pb-4">
                       <label className="text-xs font-bold uppercase tracking-widest flex items-center gap-2 text-muted-foreground">
                         <Globe className="w-3 h-3" /> Translation
@@ -249,7 +248,7 @@ export default function TranscribeFile() {
                       <button
                         onClick={() => setTranslate(!translate)}
                         className={`px-4 py-1.5 rounded-none text-[10px] font-bold uppercase tracking-widest transition-all border ${translate
-                          ? "bg-[#da5893]/10 border-[#da5893] text-[#da5893] shadow-[0_0_15px_rgba(218,88,147,0.3)]"
+                          ? "bg-[#da5893]/10 border-[#da5893] text-[#da5893]"
                           : "bg-transparent border-border text-muted-foreground hover:bg-white/5"
                           }`}
                       >
@@ -287,7 +286,7 @@ export default function TranscribeFile() {
                   {file && (
                     <button
                       onClick={handleTranscribe}
-                      className="w-full py-4 bg-[#da5893] text-white rounded-none font-bold text-xs uppercase tracking-[0.2em] shadow-[0_0_20px_rgba(218,88,147,0.4)] hover:shadow-[0_0_30px_rgba(218,88,147,0.6)] hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center justify-center gap-3 border border-[#da5893]"
+                      className="w-full py-4 bg-[#da5893] text-white rounded-none font-bold text-xs uppercase tracking-[0.2em] hover:bg-[#da5893]/90 active:scale-[0.99] transition-all flex items-center justify-center gap-3 border border-[#da5893]"
                     >
                       Start Transcription
                       <ArrowRight className="w-4 h-4" />
@@ -326,8 +325,8 @@ export default function TranscribeFile() {
               <button
                 onClick={handleCopy}
                 className={`px-6 py-2 border transition-all text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 min-w-[140px] justify-center ${copySuccess
-                    ? "bg-green-500/10 border-green-500 text-green-500"
-                    : "bg-[#da5893] border-[#da5893] text-zinc-900 hover:bg-[#da5893]/90 shadow-[0_0_10px_rgba(218,88,147,0.3)]"
+                  ? "bg-green-500/10 border-green-500 text-green-500"
+                  : "bg-[#da5893] border-[#da5893] text-zinc-900 hover:bg-[#da5893]/90"
                   }`}
               >
                 {copySuccess ? (
