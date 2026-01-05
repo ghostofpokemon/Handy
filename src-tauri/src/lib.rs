@@ -282,6 +282,7 @@ pub fn run() {
         shortcut::change_update_checks_setting,
         trigger_update_check,
         commands::transcription::transcribe_file,
+        commands::transcription::cancel_transcription,
         commands::cancel_operation,
         commands::get_app_dir_path,
         commands::get_app_settings,
