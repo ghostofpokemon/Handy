@@ -85,6 +85,8 @@ Handy is a cross-platform desktop speech-to-text application built with Tauri (R
 - `rdev` - Global keyboard shortcuts
 - `rubato` - Audio resampling
 - `rodio` - Audio playback for feedback sounds
+- `symphonia` - Audio file decoding
+- `ffmpeg` - Audio format conversion (runtime dependency)
 
 **Platform-Specific Features:**
 

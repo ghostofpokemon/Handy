@@ -12,18 +12,25 @@ pub struct ModelLoadStatus {
     current_model: Option<String>,
 }
 
+#[derive(serde::Deserialize, Type)]
+pub struct FileTranscriptionOptions {
+    pub language: Option<String>,
+    pub translate: bool,
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn transcribe_file(
     _app: AppHandle,
     transcription_manager: State<'_, Arc<TranscriptionManager>>,
     path: PathBuf,
-) -> Result<String, String> {
+    options: Option<FileTranscriptionOptions>,
+) -> Result<(), String> {
     // We'll implement the actual logic in TranscriptionManager
     // but for now let's just use the existing samples transcription if we can
     // Or we might need a new method in TranscriptionManager that takes a path.
     transcription_manager
-        .transcribe_file(path)
+        .transcribe_file(path, options)
         .await
         .map_err(|e| e.to_string())
 }

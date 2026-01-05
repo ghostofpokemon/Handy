@@ -1,16 +1,23 @@
 use enigo::{Enigo, Key, Keyboard, Mouse, Settings};
+use log::error;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 
 /// Wrapper for Enigo to store in Tauri's managed state.
+/// Wrapper for Enigo to store in Tauri's managed state.
 /// Enigo is wrapped in a Mutex since it requires mutable access.
-pub struct EnigoState(pub Mutex<Enigo>);
+/// It is now an Option to handle cases where initialization fails (e.g. missing permissions).
+pub struct EnigoState(pub Mutex<Option<Enigo>>);
 
 impl EnigoState {
-    pub fn new() -> Result<Self, String> {
-        let enigo = Enigo::new(&Settings::default())
-            .map_err(|e| format!("Failed to initialize Enigo: {}", e))?;
-        Ok(Self(Mutex::new(enigo)))
+    pub fn new() -> Self {
+        match Enigo::new(&Settings::default()) {
+            Ok(enigo) => Self(Mutex::new(Some(enigo))),
+            Err(e) => {
+                error!("Failed to initialize Enigo (Input Simulation): {}", e);
+                Self(Mutex::new(None))
+            }
+        }
     }
 }
 
@@ -18,7 +25,8 @@ impl EnigoState {
 /// Returns None if the state is not available or if getting the location fails.
 pub fn get_cursor_position(app_handle: &AppHandle) -> Option<(i32, i32)> {
     let enigo_state = app_handle.try_state::<EnigoState>()?;
-    let enigo = enigo_state.0.lock().ok()?;
+    let enigo_guard = enigo_state.0.lock().ok()?;
+    let enigo = enigo_guard.as_ref()?;
     enigo.location().ok()
 }
 

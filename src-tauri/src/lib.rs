@@ -111,7 +111,7 @@ fn show_main_window(app: &AppHandle) {
 
 fn initialize_core_logic(app_handle: &AppHandle) {
     // Initialize the input state (Enigo singleton for keyboard/mouse simulation)
-    let enigo_state = input::EnigoState::new().expect("Failed to initialize input state (Enigo)");
+    let enigo_state = input::EnigoState::new();
     app_handle.manage(enigo_state);
 
     // Initialize the managers
@@ -173,21 +173,20 @@ fn initialize_core_logic(app_handle: &AppHandle) {
                 show_main_window(app);
             }
             "transcribe_file" => {
-                use tauri_plugin_dialog::DialogExt;
-                let app_handle = app.clone();
-                app.dialog().file().pick_file(move |file_path| {
-                    if let Some(path) = file_path {
-                        let app_handle = app_handle.clone();
-                        if let Some(path_buf) = path.into_path().ok() {
-                            tauri::async_runtime::spawn(async move {
-                                let tm = app_handle.state::<Arc<TranscriptionManager>>();
-                                if let Err(e) = tm.transcribe_file(path_buf).await {
-                                    log::error!("Failed to transcribe file: {}", e);
-                                }
-                            });
-                        }
-                    }
-                });
+                // Open the transcription window
+                if let Some(window) = app.get_webview_window("transcription") {
+                    let _ = window.set_focus();
+                } else {
+                    let _ = tauri::WebviewWindowBuilder::new(
+                        app,
+                        "transcription",
+                        tauri::WebviewUrl::App("index.html?window=transcribe".into()),
+                    )
+                    .title("Transcribe File")
+                    .inner_size(800.0, 600.0)
+                    .resizable(true)
+                    .build();
+                }
             }
             "check_updates" => {
                 let settings = settings::get_settings(app);

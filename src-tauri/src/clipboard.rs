@@ -305,10 +305,14 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
     let enigo_state = app_handle
         .try_state::<EnigoState>()
         .ok_or("Enigo state not initialized")?;
-    let mut enigo = enigo_state
+    let mut enigo_guard = enigo_state
         .0
         .lock()
         .map_err(|e| format!("Failed to lock Enigo: {}", e))?;
+    
+    let mut enigo = enigo_guard
+        .as_mut()
+        .ok_or_else(|| "Input simulation unavailable (Check 'Input Monitoring' permissions)".to_string())?;
 
     // Perform the paste operation
     match paste_method {
