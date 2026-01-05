@@ -63,3 +63,12 @@ pub fn unload_model_manually(
         .unload_model()
         .map_err(|e| format!("Failed to unload model: {}", e))
 }
+
+#[tauri::command]
+#[specta::specta]
+pub fn cancel_transcription(
+    transcription_manager: State<TranscriptionManager>,
+) -> Result<(), String> {
+    transcription_manager.cancel_current_transcription();
+    Ok(())
+}

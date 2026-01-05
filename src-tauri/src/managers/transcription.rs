@@ -60,9 +60,9 @@ pub struct TranscriptionManager {
     current_model_id: Arc<Mutex<Option<String>>>,
     last_activity: Arc<AtomicU64>,
     shutdown_signal: Arc<AtomicBool>,
-    watcher_handle: Arc<Mutex<Option<thread::JoinHandle<()>>>>,
     is_loading: Arc<Mutex<bool>>,
     loading_condvar: Arc<Condvar>,
+    current_cancellation_token: Arc<Mutex<Option<Arc<AtomicBool>>>>,
 }
 
 impl TranscriptionManager {
@@ -82,6 +82,7 @@ impl TranscriptionManager {
             watcher_handle: Arc::new(Mutex::new(None)),
             is_loading: Arc::new(Mutex::new(false)),
             loading_condvar: Arc::new(Condvar::new()),
+            current_cancellation_token: Arc::new(Mutex::new(None)),
         };
 
         // Start the idle watcher
@@ -145,6 +146,16 @@ impl TranscriptionManager {
         }
 
         Ok(manager)
+    }
+
+    pub fn cancel_current_transcription(&self) {
+        let guard = self.current_cancellation_token.lock().unwrap();
+        if let Some(token) = &*guard {
+            info!("Requesting transcription cancellation...");
+            token.store(true, Ordering::Relaxed);
+        } else {
+            warn!("No active transcription to cancel.");
+        }
     }
 
     pub fn ensure_translation_capable_engine(&self) -> Result<()> {
@@ -488,6 +499,13 @@ impl TranscriptionManager {
             )
         };
 
+        // Initialize cancellation token
+        let cancellation_token = Arc::new(AtomicBool::new(false));
+        {
+            let mut guard = self.current_cancellation_token.lock().unwrap();
+            *guard = Some(cancellation_token.clone());
+        }
+        
         // CHUNKED PROCESSING LOGIC
         // We split the audio into 5-second chunks (16000 * 5 = 80000 samples)
         // This allows us to emit progress events to simulates streaming.
@@ -503,8 +521,19 @@ impl TranscriptionManager {
         
         // Accumulate timing
         let mut previous_end_time = 0.0;
+        
+        // Keep track if we cancelled
+        let mut was_cancelled = false;
 
         for (i, chunk) in chunks.iter().enumerate() {
+            // Check cancellation
+            if cancellation_token.load(Ordering::Relaxed) {
+                // We should break
+                info!("Transcription cancelled by user request.");
+                was_cancelled = true;
+                break;
+            }
+            
             debug!("Processing chunk {}/{}", i + 1, total_chunks);
             let chunk_vec = chunk.to_vec(); // Copying is unavoidable if engine takes ownership or needs vec
             
