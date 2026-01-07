@@ -60,6 +60,7 @@ pub struct TranscriptionManager {
     current_model_id: Arc<Mutex<Option<String>>>,
     last_activity: Arc<AtomicU64>,
     shutdown_signal: Arc<AtomicBool>,
+    watcher_handle: Arc<Mutex<Option<thread::JoinHandle<()>>>>,
     is_loading: Arc<Mutex<bool>>,
     loading_condvar: Arc<Condvar>,
     current_cancellation_token: Arc<Mutex<Option<Arc<AtomicBool>>>>,
@@ -506,186 +507,146 @@ impl TranscriptionManager {
             *guard = Some(cancellation_token.clone());
         }
         
-        // CHUNKED PROCESSING LOGIC
-        // We split the audio into 5-second chunks (16000 * 5 = 80000 samples)
-        // This allows us to emit progress events to simulates streaming.
+        // CONTEXT-AWARE CHUNKING
+        // We split the audio into 5-second chunks for streaming & cancellation.
+        // We pass the previous text as context to maintain translation quality.
         
         let chunk_size = 16000 * 5; // 5 seconds
-        let mut full_text_accum = String::new();
-        let mut full_segments_accum = Vec::new();
-        
         let chunks: Vec<&[f32]> = audio.chunks(chunk_size).collect();
         let total_chunks = chunks.len();
         
-        info!("Processing audio in {} chunks of size {}", total_chunks, chunk_size);
+        info!("Processing audio in {} chunks of size {} (Context-Aware)", total_chunks, chunk_size);
         
         // Accumulate timing
         let mut previous_end_time = 0.0;
-        
-        // Keep track if we cancelled
-        let mut was_cancelled = false;
+        let mut previous_text_context = String::new();
+        let mut full_segments_accum = Vec::new();
 
         for (i, chunk) in chunks.iter().enumerate() {
             // Check cancellation
             if cancellation_token.load(Ordering::Relaxed) {
-                // We should break
                 info!("Transcription cancelled by user request.");
-                was_cancelled = true;
                 break;
             }
             
             debug!("Processing chunk {}/{}", i + 1, total_chunks);
-            let chunk_vec = chunk.to_vec(); // Copying is unavoidable if engine takes ownership or needs vec
-            
-             // Perform transcription with the appropriate engine (RE-USE EXISTING ENGINE LOGIC)
-             // We need to capture the engine logic in a helper or closure to avoid code duplication
-             // But for now, let's just inline the engine call since it's inside match
-             // SMART SWITCHING: "NEVER NOT DELIVER" TRANSLATION
-        if translate_to_english {
-            if let Err(e) = self.ensure_translation_capable_engine() {
-                 // Stick with Parakeet if switch fails (log warning)
-                 error!("Smart Switch failed: {}", e);
-            }
-        }
+            let chunk_vec = chunk.to_vec();
 
-        // Perform transcription with the appropriate engine
-        let result = {
-            let mut engine_guard = self.engine.lock().unwrap();
-            let engine = engine_guard.as_mut().ok_or_else(|| {
-                // If switch happened, it should be loaded. If not, maybe auto-load failed?
-                anyhow::anyhow!(
-                    "Model failed to load. Please check your model settings."
-                )
-            })?;
-            
-            // Re-verify engine type after potential switch
-            match engine {
-                LoadedEngine::Whisper(whisper_engine) => {
-                    // Logic for Whisper (supports translation)
-                    let whisper_language = if selected_language == "auto" {
-                        None
-                    } else {
-                         // Normalize
-                        let normalized = if selected_language == "zh-Hans" || selected_language == "zh-Hant" {
-                            "zh".to_string()
-                        } else {
-                            selected_language.clone()
-                        };
-                        Some(normalized)
-                    };
-
-                    let params = WhisperInferenceParams {
-                        language: whisper_language,
-                        translate: translate_to_english,
-                        ..Default::default()
-                    };
-
-                    whisper_engine
-                        .transcribe_samples(chunk_vec, Some(params))
-                        .map_err(|e| anyhow::anyhow!("Whisper transcription failed: {}", e))?
+             // SMART SWITCHING
+            if translate_to_english {
+                if let Err(e) = self.ensure_translation_capable_engine() {
+                     error!("Smart Switch failed: {}", e);
                 }
-                LoadedEngine::Parakeet(parakeet_engine) => {
-                    // Parakeet does NOT support translation.
-                    // If we are here, Smart Switch failed or no Whisper model was found.
-                    if translate_to_english {
-                         warn!("Parakeet engine does not support translation. Falling back to transcription only.");
+            }
+
+            let result = {
+                let mut engine_guard = self.engine.lock().unwrap();
+                let engine = engine_guard.as_mut().ok_or_else(|| {
+                    anyhow::anyhow!("Model failed to load.")
+                })?;
+                
+                match engine {
+                    LoadedEngine::Whisper(whisper_engine) => {
+                        let whisper_language = if selected_language == "auto" {
+                            None
+                        } else {
+                            let normalized = if selected_language == "zh-Hans" || selected_language == "zh-Hant" {
+                                "zh".to_string()
+                            } else {
+                                selected_language.clone()
+                            };
+                            Some(normalized)
+                        };
+
+                        // Use previous text as prompt for context
+                        let prompt = if !previous_text_context.is_empty() {
+                            Some(previous_text_context.clone())
+                        } else {
+                            None
+                        };
+
+                        let params = WhisperInferenceParams {
+                            language: whisper_language,
+                            translate: translate_to_english,
+                            initial_prompt: prompt,
+                            ..Default::default()
+                        };
+
+                        whisper_engine
+                            .transcribe_samples(chunk_vec, Some(params))
+                            .map_err(|e| anyhow::anyhow!("Whisper transcription failed: {}", e))?
                     }
+                    LoadedEngine::Parakeet(parakeet_engine) => {
+                        if translate_to_english {
+                             warn!("Parakeet engine does not support translation.");
+                        }
+                        // Parakeet likely doesn't support prompt in the same way, or we'd need to check params
+                        // For now, no prompt passing for Parakeet (it's fast anyway)
+                        let params = ParakeetInferenceParams {
+                            timestamp_granularity: TimestampGranularity::Segment,
+                            ..Default::default()
+                        };
 
-                    let params = ParakeetInferenceParams {
-                        timestamp_granularity: TimestampGranularity::Segment,
-                        ..Default::default()
-                    };
+                        parakeet_engine
+                            .transcribe_samples(chunk_vec, Some(params))
+                            .map_err(|e| anyhow::anyhow!("Parakeet transcription failed: {}", e))?
+                    }
+                }
+            };
 
-                    parakeet_engine
-                        .transcribe_samples(chunk_vec, Some(params))
-                        .map_err(|e| anyhow::anyhow!("Parakeet transcription failed: {}", e))?
-
-            }
-            }
-        };
              // Process Result for this chunk
-             // 1. Shift timestamps
              let mut chunk_segments = result.segments.unwrap_or_default();
+             
+             // Extract text for next context (keep last 200 chars approx)
+             let current_text = chunk_segments.iter().map(|s| s.text.clone()).collect::<Vec<_>>().join(" ");
+             if !current_text.trim().is_empty() {
+                 previous_text_context = current_text.trim().to_string();
+                 // Optional: Limit context size if needed, but Whisper handles some length.
+                 // passing the *immediate* previous sentence is usually best.
+             }
+
+             // Shift timestamps
              for segment in &mut chunk_segments {
                  segment.start += previous_end_time;
                  segment.end += previous_end_time;
              }
              
-             // Update timing offset for next chunk
-             // Ideally we use the duration of the chunk, or the end time of the last segment?
-             // Using discrete 5s chunks:
-             // previous_end_time += 5.0; -> simpler
-             // Or precise: previous_end_time += chunk.len() as f32 / 16000.0;
              let duration_sec = chunk.len() as f32 / 16000.0;
              previous_end_time += duration_sec;
 
-             // 2. Format partial text (DEPRECATED for streaming, but kept for logic)
-             // We now prioritize emitting segments
-             
-             let mut chunk_segments_vec = Vec::new();
-             if !chunk_segments.is_empty() {
-                  for segment in &chunk_segments {
-                      // Apply custom words
-                      let text = if !settings.custom_words.is_empty() {
-                           apply_custom_words(
-                             &segment.text,
-                              &settings.custom_words,
-                              settings.word_correction_threshold
-                           )
-                      } else {
-                          segment.text.clone()
-                      };
-                      
-                      chunk_segments_vec.push(Segment {
-                          start: segment.start,
-                          end: segment.end,
-                          text: text.trim().to_string(), // Trim here
-                      });
-                  }
-             } else {
-                 // Fallback if no segments but text exists? 
-                 // If engine returns no segments but text, creates pseudo-segment?
-                 // Usually unlikely for Whisper/Parakeet.
-                 if !result.text.trim().is_empty() {
-                     chunk_segments_vec.push(Segment {
-                         start: previous_end_time - duration_sec, // Rough estimate
-                         end: previous_end_time,
-                         text: result.text.trim().to_string(),
-                     });
-                 }
+             // Emit Progress
+             let mut progress_segments_vec = Vec::new();
+             for segment in &chunk_segments {
+                  let text = if !settings.custom_words.is_empty() {
+                       apply_custom_words(
+                         &segment.text,
+                          &settings.custom_words,
+                          settings.word_correction_threshold
+                       )
+                  } else {
+                      segment.text.clone()
+                  };
+                  
+                  let s = Segment {
+                      start: segment.start,
+                      end: segment.end,
+                      text: text.trim().to_string(),
+                  };
+                  progress_segments_vec.push(s.clone());
+                  full_segments_accum.push(s); 
              }
              
-             // Emit Progress
-             if !chunk_segments_vec.is_empty() {
+             if !progress_segments_vec.is_empty() {
                  let _ = self.app_handle.emit("transcription-progress", TranscriptionProgress {
-                     segments: chunk_segments_vec.clone(),
+                     segments: progress_segments_vec,
                      is_partial: true
                  });
              }
-
-             // Accumulate
-             full_segments_accum.extend(chunk_segments); // Internal transcribe-rs/segment struct
-             // Also accumulate for final result
         }
 
+
         // Final result construction
-        // Map full_segments_accum to our Segment struct
-        let final_segments: Vec<Segment> = full_segments_accum.iter().map(|s| {
-             let text = if !settings.custom_words.is_empty() {
-                  apply_custom_words(
-                    &s.text,
-                     &settings.custom_words,
-                     settings.word_correction_threshold
-                  )
-             } else {
-                 s.text.clone()
-             };
-            Segment {
-                start: s.start,
-                end: s.end,
-                text: text.trim().to_string(),
-            }
-        }).collect();
+        let final_segments = full_segments_accum;
 
         // Construct full text for legacy return? Actually we can just return empty or formatted string.
         let full_text_combined = final_segments.iter().map(|s| s.text.clone()).collect::<Vec<_>>().join(" ");

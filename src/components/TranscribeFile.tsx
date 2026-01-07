@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  FileAudio, ArrowRight, Settings2, Download, Check, Globe, FileText, RefreshCw, Copy, StopCircle, Disc
+  FileAudio, ArrowRight, Settings2, Download, Check, Globe, FileText, RefreshCw, Copy, StopCircle, Disc, Plus, Link
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -13,6 +13,17 @@ interface Segment {
   start: number;
   end: number;
   text: string;
+}
+
+interface ModelInfo {
+  id: string;
+  name: string;
+  description: string;
+  filename: string;
+  is_downloaded: boolean;
+  is_downloading: boolean;
+  is_directory: boolean;
+  engine_type: "Whisper" | "Parakeet";
 }
 
 const LANGUAGES = [
@@ -44,6 +55,15 @@ export default function TranscribeFile() {
   const [translate, setTranslate] = useState(false);
   const [outputFormat, setOutputFormat] = useState<"txt" | "srt">("txt");
   const [copySuccess, setCopySuccess] = useState(false);
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>("");
+  const [isRefreshingModels, setIsRefreshingModels] = useState(false);
+
+  // Custom Model State
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [customUrl, setCustomUrl] = useState("");
+  const [customName, setCustomName] = useState("");
+  const [isInstalling, setIsInstalling] = useState(false);
 
   // Auto-open picker on mount if no file
   const hasOpenedRef = useRef(false);
@@ -70,6 +90,99 @@ export default function TranscribeFile() {
       }
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const fetchModels = async () => {
+    try {
+      const available = await invoke<ModelInfo[]>("get_available_models");
+      setModels(available);
+      // Get current active model
+      const current = await invoke<string>("get_current_model");
+      setSelectedModel(current);
+    } catch (e) {
+      console.error("Failed to fetch models", e);
+    }
+  };
+
+  const ensureModelSelected = async () => {
+    // If no model selected, or selected not valid, pick first downloaded
+    if (!selectedModel || !models.find(m => m.id === selectedModel)?.is_downloaded) {
+      const first = models.find(m => m.is_downloaded);
+      if (first) {
+        console.log("Auto-selecting model:", first.id);
+        await handleModelChange(first.id);
+      }
+    }
+  }
+
+  useEffect(() => {
+    fetchModels();
+  }, []);
+
+  // ensure selection after models load
+  useEffect(() => {
+    if (models.length > 0 && !selectedModel) {
+      ensureModelSelected();
+    }
+  }, [models, selectedModel]);
+
+
+  const handleRefreshModels = async () => {
+    setIsRefreshingModels(true);
+    try {
+      const refreshed = await invoke<ModelInfo[]>("refresh_models");
+      setModels(refreshed);
+      toast.success("Models refreshed");
+
+      // If prompt suggests we added a new model, auto-select it? 
+      // For now just refresh list.
+    } catch (e) {
+      toast.error("Failed to refresh models");
+      console.error(e);
+    } finally {
+      setIsRefreshingModels(false);
+    }
+  };
+
+  const handleModelChange = async (modelId: string) => {
+    try {
+      await invoke("set_active_model", { modelId });
+      setSelectedModel(modelId);
+      toast.success("Model changed to " + models.find(m => m.id === modelId)?.name);
+    } catch (e) {
+      toast.error("Failed to set model: " + e);
+    }
+  };
+
+  const handleAddCustomModel = async () => {
+    if (!customUrl) {
+      toast.error("URL is required");
+      return;
+    }
+    setIsInstalling(true);
+    try {
+      const id = await invoke<string>("register_model_from_url", {
+        url: customUrl,
+        filename: customName || null
+      });
+
+      setShowAddModal(false);
+      setCustomUrl("");
+      setCustomName("");
+      toast.success("Model registered, starting download...");
+
+      // Refresh list to show new model (it will be is_downloading=false initially in list until we trigger?)
+      // Actually we need to trigger download
+      await invoke("download_model", { modelId: id });
+
+      // Refresh again to update status
+      handleRefreshModels();
+
+    } catch (e) {
+      toast.error("Failed to add model: " + e);
+    } finally {
+      setIsInstalling(false);
     }
   };
 
@@ -257,7 +370,53 @@ export default function TranscribeFile() {
                     <div className="flex items-center gap-2 mb-6 opacity-70">
                       <span className="h-px w-8 bg-current"></span>
                       <span className="text-[10px] uppercase font-bold tracking-widest">Configuration</span>
+                      <span className="h-px w-8 bg-current"></span>
+                      <span className="text-[10px] uppercase font-bold tracking-widest">Configuration</span>
                       <span className="h-px flex-1 bg-current"></span>
+                    </div>
+
+                    {/* Model Selector */}
+                    <div className="mb-6">
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-[#da5893]">
+                          Transcription Model
+                        </label>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setShowAddModal(true)}
+                            className="text-[10px] uppercase font-bold tracking-widest hover:text-[#da5893] transition-colors flex items-center gap-1"
+                            title="Add Custom Model from URL"
+                          >
+                            <Plus className="w-3 h-3" />
+                            Add via URL
+                          </button>
+                          <button
+                            onClick={handleRefreshModels}
+                            disabled={isRefreshingModels}
+                            className={`text-[10px] uppercase font-bold tracking-widest hover:text-[#da5893] transition-colors flex items-center gap-1 ${isRefreshingModels ? 'opacity-50' : ''}`}
+                            title="Scan for local models"
+                          >
+                            <RefreshCw className={`w-3 h-3 ${isRefreshingModels ? 'animate-spin' : ''}`} />
+                            {isRefreshingModels ? 'Scanning...' : 'Refresh'}
+                          </button>
+                        </div>
+                      </div>
+                      <select
+                        value={selectedModel}
+                        onChange={(e) => handleModelChange(e.target.value)}
+                        className="w-full bg-[#1a1a1a] text-white border-2 border-[#555] p-2 text-xs font-mono focus:border-[#da5893] focus:outline-none appearance-none rounded-none shadow-[inset_2px_2px_4px_rgba(0,0,0,0.5)]"
+                        style={{ backgroundImage: 'none' }}
+                      >
+                        <option value="" disabled>Select a model...</option>
+                        {models.map(m => (
+                          <option key={m.id} value={m.id} disabled={!m.is_downloaded}>
+                            {m.name} {m.is_downloaded ? "" : "(Not Downloaded)"}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="mt-1 text-[10px] text-muted-foreground uppercase flex justify-between">
+                        <span>{models.find(m => m.id === selectedModel)?.description || "Select a model to begin"}</span>
+                      </div>
                     </div>
 
                     {/* Language Selector */}
@@ -341,11 +500,14 @@ export default function TranscribeFile() {
 
             <div className="flex gap-4">
               <button
-                onClick={() => { setSegments([]); setFile(null); }}
+                onClick={() => setSegments([])}
                 className="tactile-button px-3 py-2 text-muted-foreground hover:text-white"
-                title="Reset"
+                title="Reset / Redo"
               >
-                <RefreshCw className="w-4 h-4" />
+                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider">
+                  <RefreshCw className="w-4 h-4" />
+                  <span>Redo</span>
+                </div>
               </button>
 
               <button
@@ -363,6 +525,65 @@ export default function TranscribeFile() {
                 {copySuccess ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
                 {copySuccess ? "COPIED" : "COPY DATA"}
               </button>
+            </div>
+          </div>
+        )}
+        {/* Custom Model Modal */}
+        {showAddModal && (
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-6">
+            <div className="winamp-panel p-6 bg-[#2a2a2a] w-full max-w-md space-y-6 border-2 border-[#da5893] shadow-[0_0_20px_rgba(218,88,147,0.3)] select-text">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold uppercase tracking-widest text-[#da5893] flex items-center gap-2">
+                  <Globe className="w-4 h-4" />
+                  Add Custom Model
+                </h3>
+                <button onClick={() => setShowAddModal(false)} className="text-muted-foreground hover:text-white">x</button>
+              </div>
+
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold uppercase block text-muted-foreground">Direct Download URL</label>
+                  <div className="flex items-center gap-2 bg-[#1a1a1a] border-2 border-[#555] focus-within:border-[#da5893] p-2">
+                    <Link className="w-3 h-3 text-[#da5893]" />
+                    <input
+                      className="w-full bg-transparent text-white text-xs font-mono focus:outline-none placeholder:text-gray-600"
+                      placeholder="https://huggingface.co/.../model.bin"
+                      value={customUrl}
+                      onChange={e => setCustomUrl(e.target.value)}
+                    />
+                  </div>
+                  <p className="text-[9px] text-gray-500 uppercase tracking-wide">
+                    Supports .bin (Whisper) or .tar.gz (Parakeet)
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold uppercase block text-muted-foreground">Model Name (Optional)</label>
+                  <input
+                    className="w-full bg-[#1a1a1a] text-white border-2 border-[#555] p-2 text-xs font-mono focus:border-[#da5893] focus:outline-none placeholder:text-gray-600"
+                    placeholder="My Custom Model"
+                    value={customName}
+                    onChange={e => setCustomName(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => setShowAddModal(false)}
+                  className="flex-1 tactile-button py-3 text-xs font-bold uppercase hover:bg-white/5"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAddCustomModel}
+                  disabled={isInstalling || !customUrl}
+                  className="flex-1 tactile-button-primary py-3 text-xs font-bold uppercase flex items-center justify-center gap-2"
+                >
+                  {isInstalling ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                  {isInstalling ? "Installing..." : "Install Model"}
+                </button>
+              </div>
             </div>
           </div>
         )}

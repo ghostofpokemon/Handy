@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { commands, type ModelInfo } from "@/bindings";
+import { invoke } from "@tauri-apps/api/core";
+import { Globe, Link, Download, RefreshCw, X } from "lucide-react";
 import { getTranslatedModelName } from "../../lib/utils/modelTranslation";
 import ModelStatusButton from "./ModelStatusButton";
 import ModelDropdown from "./ModelDropdown";
@@ -57,6 +59,12 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
   const [extractingModels, setExtractingModels] = useState<Set<string>>(
     new Set(),
   );
+
+  // Custom Model State
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [customUrl, setCustomUrl] = useState("");
+  const [customName, setCustomName] = useState("");
+  const [isInstalling, setIsInstalling] = useState(false);
 
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -369,14 +377,14 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
       case "loading":
         return currentModel
           ? t("modelSelector.loading", {
-              modelName: getTranslatedModelName(currentModel, t),
-            })
+            modelName: getTranslatedModelName(currentModel, t),
+          })
           : t("modelSelector.loadingGeneric");
       case "extracting":
         return currentModel
           ? t("modelSelector.extracting", {
-              modelName: getTranslatedModelName(currentModel, t),
-            })
+            modelName: getTranslatedModelName(currentModel, t),
+          })
           : t("modelSelector.extractingGeneric");
       case "error":
         return modelError || t("modelSelector.modelError");
@@ -398,6 +406,33 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
     if (result.status === "ok") {
       await loadModels();
       setModelError(null);
+    }
+  }
+
+
+  const handleAddCustomModel = async () => {
+    if (!customUrl) return;
+    setIsInstalling(true);
+    try {
+      const id = await invoke<string>("register_model_from_url", {
+        url: customUrl,
+        filename: customName || null
+      });
+
+      setShowAddModal(false);
+      setCustomUrl("");
+      setCustomName("");
+
+      // Trigger download
+      await commands.downloadModel(id);
+      // Refresh list
+      loadModels();
+
+    } catch (e) {
+      setModelError(`Failed to add model: ${e}`);
+      setModelStatus("error");
+    } finally {
+      setIsInstalling(false);
     }
   };
 
@@ -421,10 +456,76 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
             onModelSelect={handleModelSelect}
             onModelDownload={handleModelDownload}
             onModelDelete={handleModelDelete}
+            onAddModel={() => {
+              setShowModelDropdown(false);
+              setShowAddModal(true);
+            }}
             onError={onError}
           />
         )}
       </div>
+
+      {showAddModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-6" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-background w-full max-w-md space-y-6 border border-logo-primary/30 shadow-2xl p-6 rounded-lg select-text" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-mid-gray/10 pb-4">
+              <h3 className="text-sm font-bold uppercase tracking-widest text-logo-primary flex items-center gap-2">
+                <Globe className="w-4 h-4" />
+                Add Custom Model
+              </h3>
+              <button onClick={() => setShowAddModal(false)} className="text-text/60 hover:text-text transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold uppercase block text-text/60">Direct Download URL</label>
+                <div className="flex items-center gap-2 bg-mid-gray/10 border border-mid-gray/20 focus-within:border-logo-primary/50 p-2 rounded transition-colors">
+                  <Link className="w-3 h-3 text-logo-primary" />
+                  <input
+                    className="w-full bg-transparent text-text text-xs font-mono focus:outline-none placeholder:text-text/30"
+                    placeholder="https://huggingface.co/.../model.bin"
+                    value={customUrl}
+                    onChange={e => setCustomUrl(e.target.value)}
+                    autoFocus
+                  />
+                </div>
+                <p className="text-[9px] text-text/40 uppercase tracking-wide">
+                  Supports .bin (Whisper) or .tar.gz (Parakeet)
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold uppercase block text-text/60">Model Name (Optional)</label>
+                <input
+                  className="w-full bg-mid-gray/10 text-text border border-mid-gray/20 p-2 text-xs font-mono focus:border-logo-primary/50 focus:outline-none rounded transition-colors placeholder:text-text/30"
+                  placeholder="My Custom Model"
+                  value={customName}
+                  onChange={e => setCustomName(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => setShowAddModal(false)}
+                className="flex-1 px-4 py-2 text-xs font-bold uppercase text-text/60 hover:bg-mid-gray/10 rounded transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAddCustomModel}
+                disabled={isInstalling || !customUrl}
+                className="flex-1 px-4 py-2 bg-logo-primary/10 text-logo-primary hover:bg-logo-primary/20 border border-logo-primary/30 rounded text-xs font-bold uppercase flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isInstalling ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                {isInstalling ? "Installing..." : "Install Model"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Download Progress Bar for Models */}
       <DownloadProgressDisplay
