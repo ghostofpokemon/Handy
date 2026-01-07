@@ -14,6 +14,15 @@ pub async fn get_available_models(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn refresh_models(
+    model_manager: State<'_, Arc<ModelManager>>,
+) -> Result<Vec<ModelInfo>, String> {
+    model_manager.scan_local_models().map_err(|e| e.to_string())?;
+    Ok(model_manager.get_available_models())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn get_model_info(
     model_manager: State<'_, Arc<ModelManager>>,
     model_id: String,
@@ -97,6 +106,18 @@ pub async fn is_model_loading(
     // Check if transcription manager has a loaded model
     let current_model = transcription_manager.get_current_model();
     Ok(current_model.is_none())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn register_model_from_url(
+    model_manager: State<'_, Arc<ModelManager>>,
+    url: String,
+    filename: Option<String>,
+) -> Result<String, String> {
+    model_manager
+        .register_custom_model(url, filename)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

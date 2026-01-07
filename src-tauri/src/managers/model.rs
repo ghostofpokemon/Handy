@@ -66,122 +66,32 @@ impl ModelManager {
 
         let mut available_models = HashMap::new();
 
-        // TODO this should be read from a JSON file or something..
-        available_models.insert(
-            "small".to_string(),
-            ModelInfo {
-                id: "small".to_string(),
-                name: "Whisper Small".to_string(),
-                description: "Fast and fairly accurate.".to_string(),
-                filename: "ggml-small.bin".to_string(),
-                url: Some("https://blob.handy.computer/ggml-small.bin".to_string()),
-                size_mb: 487,
-                is_downloaded: false,
-                is_downloading: false,
-                partial_size: 0,
-                is_directory: false,
-                engine_type: EngineType::Whisper,
-                accuracy_score: 0.60,
-                speed_score: 0.85,
-            },
-        );
+        // 1. Initialize with Known Defaults (so we get metadata/URLs for standard models)
+        let defaults = vec![
+            ("small", "Whisper Small", "Fast and fairly accurate.", "ggml-small.bin", "https://blob.handy.computer/ggml-small.bin", 487, 0.60, 0.85, EngineType::Whisper),
+            ("medium", "Whisper Medium", "Good accuracy, medium speed", "whisper-medium-q4_1.bin", "https://blob.handy.computer/whisper-medium-q4_1.bin", 492, 0.75, 0.60, EngineType::Whisper),
+            ("turbo", "Whisper Turbo", "Balanced accuracy and speed.", "ggml-large-v3-turbo.bin", "https://blob.handy.computer/ggml-large-v3-turbo.bin", 1600, 0.80, 0.40, EngineType::Whisper),
+            ("large", "Whisper Large", "Good accuracy, but slow.", "ggml-large-v3-q5_0.bin", "https://blob.handy.computer/ggml-large-v3-q5_0.bin", 1100, 0.85, 0.30, EngineType::Whisper),
+            ("parakeet-tdt-0.6b-v2", "Parakeet V2", "English only. Fast & Accurate.", "parakeet-tdt-0.6b-v2-int8", "https://blob.handy.computer/parakeet-v2-int8.tar.gz", 473, 0.85, 0.85, EngineType::Parakeet),
+        ];
 
-        // Add downloadable models
-        available_models.insert(
-            "medium".to_string(),
-            ModelInfo {
-                id: "medium".to_string(),
-                name: "Whisper Medium".to_string(),
-                description: "Good accuracy, medium speed".to_string(),
-                filename: "whisper-medium-q4_1.bin".to_string(),
-                url: Some("https://blob.handy.computer/whisper-medium-q4_1.bin".to_string()),
-                size_mb: 492, // Approximate size
-                is_downloaded: false,
-                is_downloading: false,
-                partial_size: 0,
-                is_directory: false,
-                engine_type: EngineType::Whisper,
-                accuracy_score: 0.75,
-                speed_score: 0.60,
-            },
-        );
-
-        available_models.insert(
-            "turbo".to_string(),
-            ModelInfo {
-                id: "turbo".to_string(),
-                name: "Whisper Turbo".to_string(),
-                description: "Balanced accuracy and speed.".to_string(),
-                filename: "ggml-large-v3-turbo.bin".to_string(),
-                url: Some("https://blob.handy.computer/ggml-large-v3-turbo.bin".to_string()),
-                size_mb: 1600, // Approximate size
-                is_downloaded: false,
-                is_downloading: false,
-                partial_size: 0,
-                is_directory: false,
-                engine_type: EngineType::Whisper,
-                accuracy_score: 0.80,
-                speed_score: 0.40,
-            },
-        );
-
-        available_models.insert(
-            "large".to_string(),
-            ModelInfo {
-                id: "large".to_string(),
-                name: "Whisper Large".to_string(),
-                description: "Good accuracy, but slow.".to_string(),
-                filename: "ggml-large-v3-q5_0.bin".to_string(),
-                url: Some("https://blob.handy.computer/ggml-large-v3-q5_0.bin".to_string()),
-                size_mb: 1100, // Approximate size
-                is_downloaded: false,
-                is_downloading: false,
-                partial_size: 0,
-                is_directory: false,
-                engine_type: EngineType::Whisper,
-                accuracy_score: 0.85,
-                speed_score: 0.30,
-            },
-        );
-
-        // Add NVIDIA Parakeet models (directory-based)
-        available_models.insert(
-            "parakeet-tdt-0.6b-v2".to_string(),
-            ModelInfo {
-                id: "parakeet-tdt-0.6b-v2".to_string(),
-                name: "Parakeet V2".to_string(),
-                description: "English only. The best model for English speakers.".to_string(),
-                filename: "parakeet-tdt-0.6b-v2-int8".to_string(), // Directory name
-                url: Some("https://blob.handy.computer/parakeet-v2-int8.tar.gz".to_string()),
-                size_mb: 473, // Approximate size for int8 quantized model
-                is_downloaded: false,
-                is_downloading: false,
-                partial_size: 0,
-                is_directory: true,
-                engine_type: EngineType::Parakeet,
-                accuracy_score: 0.85,
-                speed_score: 0.85,
-            },
-        );
-
-        available_models.insert(
-            "parakeet-tdt-0.6b-v3".to_string(),
-            ModelInfo {
-                id: "parakeet-tdt-0.6b-v3".to_string(),
-                name: "Parakeet V3".to_string(),
-                description: "Fast and accurate".to_string(),
-                filename: "parakeet-tdt-0.6b-v3-int8".to_string(), // Directory name
-                url: Some("https://blob.handy.computer/parakeet-v3-int8.tar.gz".to_string()),
-                size_mb: 478, // Approximate size for int8 quantized model
-                is_downloaded: false,
-                is_downloading: false,
-                partial_size: 0,
-                is_directory: true,
-                engine_type: EngineType::Parakeet,
-                accuracy_score: 0.80,
-                speed_score: 0.85,
-            },
-        );
+        for (id, name, desc, fname, url, size, acc, spd, etype) in defaults {
+             available_models.insert(id.to_string(), ModelInfo {
+                 id: id.to_string(),
+                 name: name.to_string(),
+                 description: desc.to_string(),
+                 filename: fname.to_string(),
+                 url: Some(url.to_string()),
+                 size_mb: size,
+                 is_downloaded: false, 
+                 is_downloading: false,
+                 partial_size: 0,
+                 is_directory: matches!(etype, EngineType::Parakeet),
+                 engine_type: etype,
+                 accuracy_score: acc,
+                 speed_score: spd,
+             });
+        }
 
         let manager = Self {
             app_handle: app_handle.clone(),
@@ -189,10 +99,13 @@ impl ModelManager {
             available_models: Mutex::new(available_models),
         };
 
+        // Scan for local models (this will update is_downloaded status and add new ones)
+        manager.scan_local_models()?;
+
         // Migrate any bundled models to user directory
         manager.migrate_bundled_models()?;
 
-        // Check which models are already downloaded
+        // update download status again just in case migration added things
         manager.update_download_status()?;
 
         // Auto-select a model if none is currently selected
@@ -201,8 +114,116 @@ impl ModelManager {
         Ok(manager)
     }
 
+    pub fn scan_local_models(&self) -> Result<()> {
+        let mut available_models = self.available_models.lock().unwrap();
+
+        // Check file system
+        if let Ok(entries) = fs::read_dir(&self.models_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let filename = entry.file_name().to_string_lossy().to_string();
+
+                if path.is_dir() {
+                    // Check for Parakeet (config.json + .onnx)
+                    if path.join("config.json").exists() {
+                        let id = filename.clone();
+                        
+                        if let Some(model) = available_models.get_mut(&id) {
+                            model.is_downloaded = true;
+                        } else {
+                            // New local model discovery (e.g. user dragged in parakeet-tdt-0.6b-v3-onnx)
+                            let mut name = filename.replace("-", " ");
+                             // capitalize words
+                            name = name.split_whitespace().map(|s| {
+                                let mut c = s.chars();
+                                match c.next() {
+                                    None => String::new(),
+                                    Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                                }
+                            }).collect::<Vec<String>>().join(" ");
+
+                            available_models.insert(id.clone(), ModelInfo {
+                                id: id.clone(),
+                                name,
+                                description: "Locally detected model".to_string(),
+                                filename: filename.clone(),
+                                url: None,
+                                size_mb: 0,
+                                is_downloaded: true,
+                                is_downloading: false,
+                                partial_size: 0,
+                                is_directory: true,
+                                engine_type: EngineType::Parakeet,
+                                accuracy_score: 0.80,
+                                speed_score: 0.80,
+                            });
+                             info!("Discovered local directory model: {}", id);
+                        }
+                    }
+                } else if filename.ends_with(".bin") {
+                    let id = filename.trim_end_matches(".bin").to_string();
+                    
+                    // Match against ID or Filename
+                    let mut found = false;
+                    for model in available_models.values_mut() {
+                        if model.id == id || model.filename == filename {
+                             model.is_downloaded = true;
+                             found = true;
+                             // normalize ID if it matched filename but not ID? 
+                             // No, keep ID as keys.
+                             break;
+                        }
+                    }
+
+                    if !found {
+                        // Add as new Whisper model
+                         available_models.insert(id.clone(), ModelInfo {
+                            id: id.clone(),
+                            name: id.clone(),
+                            description: "Locally detected Whisper model".to_string(),
+                            filename: filename.clone(),
+                            url: None,
+                            size_mb: 0,
+                            is_downloaded: true,
+                            is_downloading: false,
+                            partial_size: 0,
+                            is_directory: false,
+                            engine_type: EngineType::Whisper,
+                            accuracy_score: 0.70,
+                            speed_score: 0.50,
+                        });
+                        info!("Discovered local file model: {}", id);
+                    }
+                }
+            }
+        }
+        
+         // Also update download status for things NOT found (unless downloading)
+        for model in available_models.values_mut() {
+             // For directory models
+             if model.is_directory {
+                 let p = self.models_dir.join(&model.filename);
+                 if p.exists() && p.is_dir() && p.join("config.json").exists() {
+                     model.is_downloaded = true;
+                 } else if !model.is_downloading {
+                     model.is_downloaded = false;
+                 }
+             } else {
+                 let p = self.models_dir.join(&model.filename);
+                 if p.exists() {
+                     model.is_downloaded = true;
+                 } else if !model.is_downloading {
+                     model.is_downloaded = false;
+                 }
+             }
+        }
+
+        Ok(())
+    }
+
     pub fn get_available_models(&self) -> Vec<ModelInfo> {
         let models = self.available_models.lock().unwrap();
+        // Return sorted?
         models.values().cloned().collect()
     }
 
@@ -719,5 +740,51 @@ impl ModelManager {
 
         info!("Download cancelled for: {}", model_id);
         Ok(())
+    }
+
+    pub fn register_custom_model(&self, url: String, filename: Option<String>) -> Result<String> {
+        let filename = filename.unwrap_or_else(|| {
+            url.split('/').last().unwrap_or("custom_model.bin").to_string()
+        });
+
+        // Generate a safe ID (slugify)
+        let id = filename
+            .replace(|c: char| !c.is_alphanumeric(), "_")
+            .to_lowercase();
+        
+        let engine_type = if filename.contains("parakeet") || filename.ends_with(".tar.gz") {
+            EngineType::Parakeet
+        } else {
+            EngineType::Whisper
+        };
+
+        // Check if exists
+        let mut models = self.available_models.lock().unwrap();
+        if models.contains_key(&id) {
+             // If already exists and downloaded, maybe just return Ok(id)?
+             // Or error? Let's return ID so user can use it.
+             return Ok(id);
+        }
+
+        let info = ModelInfo {
+            id: id.clone(),
+            name: filename.clone(), // Use filename as name initially
+            description: "Custom URL Model".to_string(),
+            filename: filename.clone(),
+            url: Some(url),
+            size_mb: 0,
+            is_downloaded: false,
+            is_downloading: false,
+            partial_size: 0,
+            is_directory: matches!(engine_type, EngineType::Parakeet),
+            engine_type,
+            accuracy_score: 0.5,
+            speed_score: 0.5,
+        };
+
+        models.insert(id.clone(), info);
+        info!("Registered custom model: {}", id);
+
+        Ok(id)
     }
 }

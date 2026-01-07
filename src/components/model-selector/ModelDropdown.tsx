@@ -22,6 +22,7 @@ interface ModelDropdownProps {
   onModelSelect: (modelId: string) => void;
   onModelDownload: (modelId: string) => void;
   onModelDelete: (modelId: string) => Promise<void>;
+  onAddModel: () => void;
   onError?: (error: string) => void;
 }
 
@@ -32,6 +33,7 @@ const ModelDropdown: React.FC<ModelDropdownProps> = ({
   onModelSelect,
   onModelDownload,
   onModelDelete,
+  onAddModel,
   onError,
 }) => {
   const { t } = useTranslation();
@@ -97,11 +99,10 @@ const ModelDropdown: React.FC<ModelDropdownProps> = ({
               }}
               tabIndex={0}
               role="button"
-              className={`w-full px-3 py-2 text-left hover:bg-mid-gray/10 transition-colors cursor-pointer focus:outline-none ${
-                currentModelId === model.id
-                  ? "bg-logo-primary/10 text-logo-primary"
-                  : ""
-              }`}
+              className={`w-full px-3 py-2 text-left hover:bg-mid-gray/10 transition-colors cursor-pointer focus:outline-none ${currentModelId === model.id
+                ? "bg-logo-primary/10 text-logo-primary"
+                : ""
+                }`}
             >
               <div className="flex items-center justify-between">
                 <div>
@@ -174,11 +175,10 @@ const ModelDropdown: React.FC<ModelDropdownProps> = ({
                 tabIndex={0}
                 role="button"
                 aria-disabled={isDownloading}
-                className={`w-full px-3 py-2 text-left hover:bg-mid-gray/10 transition-colors cursor-pointer focus:outline-none ${
-                  isDownloading
-                    ? "opacity-50 cursor-not-allowed hover:bg-transparent"
-                    : ""
-                }`}
+                className={`w-full px-3 py-2 text-left hover:bg-mid-gray/10 transition-colors cursor-pointer focus:outline-none ${isDownloading
+                  ? "opacity-50 cursor-not-allowed hover:bg-transparent"
+                  : ""
+                  }`}
               >
                 <div className="flex items-center justify-between">
                   <div>
@@ -231,6 +231,16 @@ const ModelDropdown: React.FC<ModelDropdownProps> = ({
           {t("modelSelector.noModelsAvailable")}
         </div>
       )}
+
+      {/* Add Model Button */}
+      <div className="border-t border-mid-gray/10 mt-1 pt-1">
+        <button
+          onClick={() => onAddModel()}
+          className="w-full px-3 py-2 text-left hover:bg-mid-gray/10 transition-colors cursor-pointer focus:outline-none flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-logo-primary"
+        >
+          <span>+</span> {t("modelSelector.addModelUrl", { defaultValue: "Add Model via URL" })}
+        </button>
+      </div>
     </div>
   );
 };
