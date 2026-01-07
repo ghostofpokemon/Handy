@@ -436,6 +436,58 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
     }
   };
 
+  // Auto-fill name from URL
+  useEffect(() => {
+    if (!customUrl || customName) return;
+
+    try {
+      const urlStr = customUrl.trim();
+      if (!urlStr.startsWith("http")) return;
+
+      const urlObj = new URL(urlStr);
+      const pathSegments = urlObj.pathname.split('/').filter(Boolean);
+      if (pathSegments.length === 0) return;
+
+      let derivedName = "";
+
+      // Check for HuggingFace File URL: /user/repo/resolve/branch/filename
+      // Or Repo URL: /user/repo
+
+      const lastSegment = pathSegments[pathSegments.length - 1];
+
+      if (lastSegment.includes('.')) {
+        // Likely a filename
+        derivedName = lastSegment;
+        // Remove extension
+        derivedName = derivedName.replace(/\.[^/.]+$/, "");
+      } else if (pathSegments.length >= 2) {
+        // Fallback to repo name (2nd segment typically)
+        // e.g. /google/medasr -> medasr
+        // If local domain, might be different. 
+        // Logic: if huggingface.co, take 2nd segment if exists.
+        if (urlObj.hostname.includes("huggingface.co")) {
+          derivedName = pathSegments[1];
+        } else {
+          derivedName = lastSegment;
+        }
+      } else {
+        derivedName = lastSegment;
+      }
+
+      // Clean up separators
+      derivedName = derivedName.replace(/[-_]/g, ' ');
+      // Title Case
+      derivedName = derivedName.replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase());
+
+      if (derivedName) {
+        setCustomName(derivedName);
+      }
+
+    } catch (e) {
+      // Ignore invalid URLs while typing
+    }
+  }, [customUrl, customName]);
+
   return (
     <>
       {/* Model Status and Switcher */}
